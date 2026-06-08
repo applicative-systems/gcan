@@ -172,11 +172,7 @@ pub fn delete(rows: &[Row], yes: bool) -> i32 {
         links.len() - failed,
         links.len()
     );
-    if failed > 0 {
-        1
-    } else {
-        0
-    }
+    if failed > 0 { 1 } else { 0 }
 }
 
 /// Three-way confirmation: stdin if it is a tty, else /dev/tty, else refuse.
