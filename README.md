@@ -1,83 +1,114 @@
-# gcan
+# gcan — see what's eating your Nix store, and reclaim it
 
-Analyze, filter, and prune **Nix GC roots**. For every root under
-`/nix/var/nix/gcroots` it reports the transitive closure size, where the
-indirect "result" symlink lives, and how old it is. `direnv` roots are grouped
-per project, and the listing is gated to roots the **current user can actually
-delete** (never the protected `current-*` / `booted-*` roots), so it doubles as
-a safe deletion preview.
+`nix-collect-garbage` only frees what nothing points to. The trouble is that a
+lot _does_ point to things — every `nix build` result, every `direnv`
+environment, every old profile generation is a **GC root** that quietly pins its
+whole dependency closure on disk. Months later you run garbage collection,
+it frees almost nothing, and you have no idea why.
 
-It is a Rust port of the reference `gcroot-sizes.sh` in this repo, adding JSON
-output and a cache.
-
-## Usage
-
-```
-gcan [OPTIONS] [GCROOTS_DIR]            # default GCROOTS_DIR: /nix/var/nix/gcroots
-
-  -s, --min-size <SIZE>   only roots whose closure is >= SIZE  (500M, 2G, bytes)
-  -a, --min-age  <AGE>    only roots at least AGE old           (30d, 12h, 2w)
-      --all               also list protected/undeletable roots (table/JSON only)
-      --tui               interactive terminal UI (browse, sort, toggle, delete)
-      --json              structured JSON output
-  -p, --print-links       print indirect symlink paths (pipe into `xargs rm`)
-  -d, --delete            delete matching roots after confirmation
-  -y, --yes               skip the confirmation (with --delete)
-      --no-cache          bypass the cache (no read, no write)
-  -h, --help
-```
-
-### Interactive TUI (`--tui`)
-
-`gcan --tui` opens a full-screen browser of every root:
+`gcan` answers that question. It looks at all your GC roots and shows you, sorted
+biggest-first, **how much disk each one is really keeping alive**, where it lives,
+and how long it's been there — so you can see what to let go of and clear it out
+safely.
 
 ```
-↑/↓ (or j/k)  move        s  sort by size      r  reverse sort order
-Home/End      jump        n  sort by name      t  toggle all / deletable-only
-D             delete      a  sort by age        q / Esc  quit
+      SIZE     AGE  ROOTS  LOCATION
+     4.8GB      6d      7  /home/you/src/old-project/.direnv/  (direnv)
+     3.7GB     14d     30  /home/you/src/training/.direnv/  (direnv)
+     1.2GB     90d      1  /home/you/src/experiment/result-1
+     741MB     21d      1  ~/.local/state/nix/profiles/profile-51-link
+      ----
+      26GB             TOTAL reclaimable
 ```
 
-`D` asks for confirmation before unlinking, then rescans live. Protected
-(`current-*`/`booted-*`) and root-owned roots are shown greyed out with a marker
-and cannot be deleted. As with the other modes, run `nix-collect-garbage`
-afterwards to reclaim the space.
+## Why you'd want it
 
-Examples:
+- **"`nix-collect-garbage` barely freed anything."** Something is pinning the
+  store. `gcan` shows you exactly what, ranked by size.
+- **direnv pack-rats.** Every project with a `.direnv` keeps a full copy of its
+  flake inputs alive. A repo you haven't opened in three months can still be
+  holding gigabytes. `gcan` groups all of a project's direnv roots into one line,
+  so you see the true cost _per project_ — not 30 cryptic hashes.
+- **Forgotten `result` links.** That `result` symlink from a `nix build` you ran
+  once is pinning its entire closure forever. `gcan` lists them with their age.
+- **Old generations.** Stale profile and home-manager generations add up; `gcan`
+  surfaces the big, old ones.
+- **Spring cleaning.** Sort by age, find what you haven't touched in months, and
+  reclaim it in one pass.
+
+## Using it
+
+`gcan` has three subcommands: **`list`** (show roots), **`delete`** (remove them),
+and **`tui`** (do it interactively).
+
+List the biggest reclaimable roots:
 
 ```sh
-gcan -s 1G -a 30d                 # preview: groups >= 1G, older than 30 days
-gcan -s 1G -a 30d -p | xargs rm   # release them, then:
-nix-collect-garbage               # actually reclaim the store space
-gcan -s 2G -a 30d -d              # interactive delete with a confirmation
-gcan --all --json                 # full inventory as JSON
+gcan list
 ```
 
-Deleting a root only unlinks its indirect symlink; run `nix-collect-garbage`
-afterwards to reclaim the disk space and clear the stale `auto/<hash>` entries.
-
-## Caching
-
-Nix store paths are immutable, so closure sizes never change. `gcan` caches them
-in `${XDG_CACHE_HOME:-~/.cache}/gcan/cache.json`:
-
-- `sizes`: each store path's own NAR size
-- `groups`: each member-set's union closure size
-
-A warm, unchanged run reads every group size from the cache and issues **zero**
-`nix-store` calls. `--no-cache` bypasses the cache entirely; it produces
-byte-identical output to a cached run (only slower), which the test suite asserts.
-
-## Requirements
-
-`gcan` shells out to `nix-store`, so **`nix` must be on `PATH`** at runtime. This
-is always the case on a host that has `/nix/var/nix/gcroots`. The Nix package
-intentionally does not bundle `nix` (keeps the closure tiny).
-
-## Build
+Narrow it down to the things actually worth clearing — say, anything over 1 GB
+that you haven't touched in a month, oldest first:
 
 ```sh
-nix build              # -> ./result/bin/gcan
-nix develop            # dev shell with cargo/rustc/clippy
-cargo build --release
-cargo test
+gcan list --min-size 1G --min-age 30d --sort age
 ```
+
+By default `list` only shows roots **you can safely delete**. Add `--all` to see
+the full picture, including the live system and other protected roots (these are
+marked and can never be deleted). You can also sort by `size`, `name`, or `age`
+(`--sort`) and flip the order with `-r`.
+
+### Browse and clean up interactively
+
+```sh
+gcan tui
+```
+
+This opens a full-screen view you can drive with the keyboard:
+
+```
+ ↑/↓ (or j/k)  move          s  sort by size       t  show all / only deletable
+ Home/End      jump          n  sort by name       r  reverse the order
+ D             delete        a  sort by age         q / Esc  quit
+```
+
+Press **D** on a root to delete it — `gcan` asks for confirmation, removes it, and
+refreshes the list on the spot. You can start it narrowed down too, e.g.
+`gcan tui --min-size 1G`.
+
+### Clean up from the command line
+
+```sh
+# Delete everything ≥2 GB and older than 30 days, after a confirmation prompt:
+gcan delete --min-size 2G --min-age 30d
+
+# Or pipe the exact symlinks somewhere and remove them yourself:
+gcan list --min-size 1G --format paths | xargs rm
+```
+
+### One important last step
+
+Deleting a root just removes the _link_ that was pinning the data — it tells Nix
+the data is no longer wanted. To actually give the disk space back, run garbage
+collection afterwards:
+
+```sh
+nix-collect-garbage
+```
+
+## Safe by default
+
+`gcan` will never offer to delete something that would break your system:
+
+- It only lists roots **you own and can remove** — never root-owned system roots.
+- The live system, the booted system, and your current home-manager generation
+  (and anything else marked `current-*` / `booted-*`) are always protected.
+- Deletions in the TUI and via `gcan delete` ask for confirmation first.
+
+You can also export the full inventory as JSON (`gcan list --all --format json`)
+to feed into your own scripts or dashboards.
+
+## Maintainers
+
+`gcan` is built and maintained by [**applicative.systems**](https://applicative.systems).

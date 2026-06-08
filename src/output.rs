@@ -1,9 +1,35 @@
 //! Output modes: table, JSON, print-links, delete.
 
 use crate::format::{human_age, iec_size};
+use clap::ValueEnum;
 use serde::Serialize;
+use std::cmp::Ordering;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
+
+/// Column to sort the listing by. Shared by `list` and the TUI.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SortKey {
+    Size,
+    Name,
+    Age,
+}
+
+impl SortKey {
+    /// Natural default direction: size/age descending (biggest/oldest first),
+    /// name ascending (A–Z). `--reverse` (or pressing the key again) flips it.
+    pub fn default_desc(self) -> bool {
+        !matches!(self, SortKey::Name)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortKey::Size => "size",
+            SortKey::Name => "name",
+            SortKey::Age => "age",
+        }
+    }
+}
 
 /// One displayed group, with its resolved size and age.
 pub struct Row {
@@ -37,15 +63,22 @@ impl Row {
     }
 }
 
-/// Total order so cached and uncached runs are byte-identical:
-/// size desc, then location asc, then group key asc.
-pub fn sort_rows(rows: &mut [Row]) {
-    rows.sort_by(|a, b| {
-        b.size
-            .cmp(&a.size)
-            .then_with(|| a.loc.cmp(&b.loc))
-            .then_with(|| a.key.cmp(&b.key))
-    });
+/// Sort rows by `key`/`desc`, with a total order (location then group key as
+/// tie-breakers) so cached and uncached runs are byte-identical.
+pub fn sort_rows(rows: &mut [Row], key: SortKey, desc: bool) {
+    rows.sort_by(|a, b| order(a, b, key, desc));
+}
+
+/// Ordering of two rows under the given sort key and direction.
+pub fn order(a: &Row, b: &Row, key: SortKey, desc: bool) -> Ordering {
+    let base = match key {
+        SortKey::Size => a.size.cmp(&b.size),
+        SortKey::Age => a.age.cmp(&b.age),
+        SortKey::Name => a.loc.cmp(&b.loc),
+    };
+    let base = if desc { base.reverse() } else { base };
+    base.then_with(|| a.loc.cmp(&b.loc))
+        .then_with(|| a.key.cmp(&b.key))
 }
 
 /// Render the human table. Reclaimable total counts deletable rows only.

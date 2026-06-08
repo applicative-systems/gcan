@@ -2,7 +2,7 @@
 
 use crate::cache::{self, Cache};
 use crate::format::{human_age, iec_size};
-use crate::output::Row;
+use crate::output::{Row, SortKey, order};
 use crate::{size, walk};
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -10,26 +10,8 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row as TRow, Table, TableState};
-use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
-
-#[derive(Clone, Copy, PartialEq)]
-enum Sort {
-    Size,
-    Name,
-    Age,
-}
-
-impl Sort {
-    fn label(self) -> &'static str {
-        match self {
-            Sort::Size => "size",
-            Sort::Name => "name",
-            Sort::Age => "age",
-        }
-    }
-}
 
 struct App {
     dir: PathBuf,
@@ -37,18 +19,22 @@ struct App {
     use_cache: bool,
     now: u64,
     rows: Vec<Row>,
-    /// Indices into `rows`, filtered by `show_all` and sorted — the visible order.
+    /// Indices into `rows`, filtered and sorted — the visible order.
     view: Vec<usize>,
     selected: usize,
-    sort: Sort,
+    sort: SortKey,
     desc: bool,
     show_all: bool,
+    /// Persistent predicate floor for the session.
+    min_size: u64,
+    min_age: u64,
     /// Index into `rows` of a delete awaiting confirmation.
     confirm: Option<usize>,
     status: String,
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         groups: Vec<walk::Group>,
         mut cache: Cache,
@@ -56,6 +42,9 @@ impl App {
         dir: &Path,
         use_cache: bool,
         show_all: bool,
+        min_size: u64,
+        min_age: u64,
+        sort: SortKey,
     ) -> App {
         let rows = resolve_rows(&groups, &mut cache, now);
         let mut app = App {
@@ -66,9 +55,11 @@ impl App {
             rows,
             view: Vec::new(),
             selected: 0,
-            sort: Sort::Size,
-            desc: true,
+            sort,
+            desc: sort.default_desc(),
             show_all,
+            min_size,
+            min_age,
             confirm: None,
             status: String::from(
                 "↑/↓ move · s/n/a sort · r reverse · t toggle · D delete · q quit",
@@ -91,11 +82,15 @@ impl App {
     /// Recompute the filtered, sorted view and clamp the selection.
     fn rebuild_view(&mut self) {
         let (sort, desc, show_all) = (self.sort, self.desc, self.show_all);
+        let (min_size, min_age) = (self.min_size, self.min_age);
         let rows = &self.rows;
         let mut view: Vec<usize> = (0..rows.len())
-            .filter(|&i| show_all || rows[i].deletable)
+            .filter(|&i| {
+                let r = &rows[i];
+                (show_all || r.deletable) && r.size >= min_size && r.age >= min_age
+            })
             .collect();
-        view.sort_by(|&a, &b| cmp(&rows[a], &rows[b], sort, desc));
+        view.sort_by(|&a, &b| order(&rows[a], &rows[b], sort, desc));
         self.view = view;
         if self.selected >= self.view.len() {
             self.selected = self.view.len().saturating_sub(1);
@@ -110,13 +105,12 @@ impl App {
             .sum()
     }
 
-    fn set_sort(&mut self, sort: Sort) {
+    fn set_sort(&mut self, sort: SortKey) {
         if self.sort == sort {
             self.desc = !self.desc;
         } else {
             self.sort = sort;
-            // Sensible default direction: big/old first, names A–Z.
-            self.desc = !matches!(sort, Sort::Name);
+            self.desc = sort.default_desc();
         }
         self.rebuild_view();
     }
@@ -152,18 +146,8 @@ fn resolve_rows(groups: &[walk::Group], cache: &mut Cache, now: u64) -> Vec<Row>
         .collect()
 }
 
-fn cmp(a: &Row, b: &Row, sort: Sort, desc: bool) -> Ordering {
-    let base = match sort {
-        Sort::Size => a.size.cmp(&b.size),
-        Sort::Age => a.age.cmp(&b.age),
-        Sort::Name => a.loc.cmp(&b.loc),
-    };
-    let base = if desc { base.reverse() } else { base };
-    base.then_with(|| a.loc.cmp(&b.loc))
-        .then_with(|| a.key.cmp(&b.key))
-}
-
 /// Entry point: own the data, run the event loop, restore the terminal.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     groups: Vec<walk::Group>,
     cache: Cache,
@@ -171,9 +155,14 @@ pub fn run(
     dir: &Path,
     use_cache: bool,
     show_all: bool,
+    min_size: u64,
+    min_age: u64,
+    sort: SortKey,
 ) -> io::Result<()> {
     eprintln!("scanning GC roots…");
-    let mut app = App::new(groups, cache, now, dir, use_cache, show_all);
+    let mut app = App::new(
+        groups, cache, now, dir, use_cache, show_all, min_size, min_age, sort,
+    );
 
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app);
@@ -216,9 +205,9 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Res
             KeyCode::Up | KeyCode::Char('k') => move_sel(app, -1),
             KeyCode::Home => app.selected = 0,
             KeyCode::End => app.selected = app.view.len().saturating_sub(1),
-            KeyCode::Char('s') => app.set_sort(Sort::Size),
-            KeyCode::Char('n') => app.set_sort(Sort::Name),
-            KeyCode::Char('a') => app.set_sort(Sort::Age),
+            KeyCode::Char('s') => app.set_sort(SortKey::Size),
+            KeyCode::Char('n') => app.set_sort(SortKey::Name),
+            KeyCode::Char('a') => app.set_sort(SortKey::Age),
             KeyCode::Char('r') => {
                 app.desc = !app.desc;
                 app.rebuild_view();
