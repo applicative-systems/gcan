@@ -18,6 +18,7 @@ gcan [OPTIONS] [GCROOTS_DIR]            # default GCROOTS_DIR: /nix/var/nix/gcro
   -s, --min-size <SIZE>   only roots whose closure is >= SIZE  (500M, 2G, bytes)
   -a, --min-age  <AGE>    only roots at least AGE old           (30d, 12h, 2w)
       --all               also list protected/undeletable roots (table/JSON only)
+      --tui               interactive terminal UI (browse, sort, toggle, delete)
       --json              structured JSON output
   -p, --print-links       print indirect symlink paths (pipe into `xargs rm`)
   -d, --delete            delete matching roots after confirmation
@@ -25,6 +26,21 @@ gcan [OPTIONS] [GCROOTS_DIR]            # default GCROOTS_DIR: /nix/var/nix/gcro
       --no-cache          bypass the cache (no read, no write)
   -h, --help
 ```
+
+### Interactive TUI (`--tui`)
+
+`gcan --tui` opens a full-screen browser of every root:
+
+```
+↑/↓ (or j/k)  move        s  sort by size      r  reverse sort order
+Home/End      jump        n  sort by name      t  toggle all / deletable-only
+D             delete      a  sort by age        q / Esc  quit
+```
+
+`D` asks for confirmation before unlinking, then rescans live. Protected
+(`current-*`/`booted-*`) and root-owned roots are shown greyed out with a marker
+and cannot be deleted. As with the other modes, run `nix-collect-garbage`
+afterwards to reclaim the space.
 
 Examples:
 

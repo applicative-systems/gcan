@@ -19,6 +19,24 @@ pub struct Row {
     pub key: String,
 }
 
+impl Row {
+    /// Build a display row from a group and its resolved closure size.
+    pub fn from_group(g: &crate::walk::Group, size: u64, now: u64) -> Row {
+        Row {
+            size,
+            age: now.saturating_sub(g.newest_mtime),
+            newest_mtime: g.newest_mtime,
+            count: g.count,
+            loc: g.loc.clone(),
+            kind: g.kind.as_str(),
+            links: g.links.clone(),
+            deletable: g.deletable(),
+            protected: g.protected,
+            key: g.key.clone(),
+        }
+    }
+}
+
 /// Total order so cached and uncached runs are byte-identical:
 /// size desc, then location asc, then group key asc.
 pub fn sort_rows(rows: &mut [Row]) {

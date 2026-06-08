@@ -5,6 +5,7 @@ mod format;
 mod nix;
 mod output;
 mod size;
+mod tui;
 mod walk;
 
 use cache::Cache;
@@ -32,6 +33,10 @@ struct Cli {
     /// Include protected/undeletable roots in the listing (table/JSON only).
     #[arg(long)]
     all: bool,
+
+    /// Launch the interactive terminal UI (sort, toggle, delete).
+    #[arg(long, group = "mode")]
+    tui: bool,
 
     /// Emit structured JSON instead of the table.
     #[arg(long, group = "mode")]
@@ -81,6 +86,19 @@ fn main() -> ExitCode {
     let now = cli.now.unwrap_or_else(real_now);
     let groups = walk::scan(&cli.gcroots_dir);
 
+    let mut cache = if cli.no_cache {
+        Cache::empty()
+    } else {
+        Cache::load(&cache::default_path())
+    };
+
+    if cli.tui {
+        return match tui::run(groups, cache, now, &cli.gcroots_dir, !cli.no_cache, cli.all) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => fail(&format!("tui: {e}")),
+        };
+    }
+
     // Delete/print-links always act on the deletable shortlist; the table/JSON
     // listing shows the shortlist too, unless --all widens it.
     let shortlist_only = cli.delete || cli.print_links || !cli.all;
@@ -98,11 +116,6 @@ fn main() -> ExitCode {
         })
         .collect();
 
-    let mut cache = if cli.no_cache {
-        Cache::empty()
-    } else {
-        Cache::load(&cache::default_path())
-    };
     let sizes = size::group_sizes(&candidates, &mut cache);
     if !cli.no_cache {
         if let Err(e) = cache.save(&cache::default_path()) {
@@ -114,18 +127,7 @@ fn main() -> ExitCode {
         .iter()
         .zip(&sizes)
         .filter(|(_, &sz)| sz >= min_size)
-        .map(|(g, &sz)| Row {
-            size: sz,
-            age: age_of(g),
-            newest_mtime: g.newest_mtime,
-            count: g.count,
-            loc: g.loc.clone(),
-            kind: g.kind.as_str(),
-            links: g.links.clone(),
-            deletable: g.deletable(),
-            protected: g.protected,
-            key: g.key.clone(),
-        })
+        .map(|(g, &sz)| Row::from_group(g, sz, now))
         .collect();
     output::sort_rows(&mut rows);
 
