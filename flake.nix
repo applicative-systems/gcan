@@ -31,7 +31,18 @@
       let
         pkgs = import inputs.nixpkgs { inherit system; };
         naersk = pkgs.callPackage inputs.naersk { };
-        treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs ./treefmt.nix;
+        treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.lock";
+
+          programs = {
+            deadnix.enable = true;
+            nixfmt.enable = true;
+            rustfmt.enable = true;
+            shfmt.enable = true;
+            statix.enable = true;
+            prettier.enable = true;
+          };
+        };
       in
       {
         packages.default = naersk.buildPackage {
@@ -56,7 +67,24 @@
 
         formatter = treefmtEval.config.build.wrapper;
 
-        checks.formatting = treefmtEval.config.build.check inputs.self;
+        # Gates run by `nix flake check`:
+        #   - formatting: treefmt (nixfmt, rustfmt, shfmt, deadnix, statix, prettier)
+        #   - clippy:     cargo clippy --all-targets -- -D warnings
+        #   - tests:      cargo test
+        checks = {
+          formatting = treefmtEval.config.build.check inputs.self;
+
+          clippy = naersk.buildPackage {
+            src = ./.;
+            mode = "clippy";
+            cargoBuildOptions = x: x ++ [ "--all-targets" ];
+          };
+
+          tests = naersk.buildPackage {
+            src = ./.;
+            mode = "test";
+          };
+        };
       }
     );
 }
