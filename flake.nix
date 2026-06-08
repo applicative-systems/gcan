@@ -67,10 +67,6 @@
 
         formatter = treefmtEval.config.build.wrapper;
 
-        # Gates run by `nix flake check`:
-        #   - formatting: treefmt (nixfmt, rustfmt, shfmt, deadnix, statix, prettier)
-        #   - clippy:     cargo clippy --all-targets -- -D warnings
-        #   - tests:      cargo test
         checks = {
           formatting = treefmtEval.config.build.check inputs.self;
 

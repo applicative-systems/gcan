@@ -185,20 +185,30 @@ pub fn print_links(rows: &[Row]) {
     }
 }
 
+/// What `delete` did, so the caller can decide the exit code and whether to run
+/// garbage collection.
+pub enum DeleteOutcome {
+    /// No rows matched the filters.
+    Nothing,
+    /// The user declined at the confirmation prompt (or there was no terminal).
+    Aborted,
+    /// Unlinking happened: `removed` succeeded, `failed` did not.
+    Done { removed: usize, failed: usize },
+}
+
 /// Delete the indirect symlinks of `rows` (already the deletable shortlist).
-/// Returns the process exit code.
-pub fn delete(rows: &[Row], yes: bool) -> i32 {
+pub fn delete(rows: &[Row], yes: bool) -> DeleteOutcome {
     let links: Vec<&String> = rows.iter().flat_map(|r| r.links.iter()).collect();
     if links.is_empty() {
         eprintln!("Nothing to delete for the given filters.");
-        return 0;
+        return DeleteOutcome::Nothing;
     }
 
     eprint!("{}", render_table(rows, false));
     eprintln!();
 
     if !yes && !confirm(links.len()) {
-        return 1;
+        return DeleteOutcome::Aborted;
     }
 
     let mut failed = 0usize;
@@ -217,13 +227,10 @@ pub fn delete(rows: &[Row], yes: bool) -> i32 {
     }
     let _ = out.flush();
 
+    let removed = links.len() - failed;
     eprintln!();
-    eprintln!(
-        "Removed {}/{} root symlink(s). Run 'nix-collect-garbage' to reclaim the store space.",
-        links.len() - failed,
-        links.len()
-    );
-    if failed > 0 { 1 } else { 0 }
+    eprintln!("Removed {removed}/{} root symlink(s).", links.len());
+    DeleteOutcome::Done { removed, failed }
 }
 
 /// Three-way confirmation: stdin if it is a tty, else /dev/tty, else refuse.

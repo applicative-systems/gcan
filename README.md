@@ -83,6 +83,9 @@ refreshes the list on the spot. You can start it narrowed down too, e.g.
 # Delete everything ≥2 GB and older than 30 days, after a confirmation prompt:
 gcan delete --min-size 2G --min-age 30d
 
+# Delete and reclaim the space in one go (runs nix-collect-garbage for you):
+gcan delete --min-size 2G --min-age 30d --gc
+
 # Or pipe the exact symlinks somewhere and remove them yourself:
 gcan list --min-size 1G --format paths | xargs rm
 ```
@@ -96,6 +99,8 @@ collection afterwards:
 ```sh
 nix-collect-garbage
 ```
+
+(or pass `--gc` to `gcan delete` to have it run for you).
 
 ## Safe by default
 

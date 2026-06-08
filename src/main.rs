@@ -104,6 +104,10 @@ struct DeleteArgs {
     /// Skip the confirmation prompt.
     #[arg(short = 'y', long)]
     yes: bool,
+
+    /// After deleting, run `nix-collect-garbage` to reclaim the freed space.
+    #[arg(long = "gc", visible_alias = "collect-garbage")]
+    gc: bool,
 }
 
 #[derive(Args)]
@@ -193,7 +197,26 @@ fn main() -> ExitCode {
             let mut rows = build_rows(&groups, &mut cache, now, false, min_size, min_age);
             save_cache(&g, &cache);
             output::sort_rows(&mut rows, SortKey::Size, true);
-            ExitCode::from(output::delete(&rows, a.yes) as u8)
+            match output::delete(&rows, a.yes) {
+                output::DeleteOutcome::Nothing => ExitCode::SUCCESS,
+                output::DeleteOutcome::Aborted => ExitCode::from(1),
+                output::DeleteOutcome::Done { removed, failed } => {
+                    if removed > 0 {
+                        if a.gc {
+                            if let Err(e) = nix::collect_garbage() {
+                                eprintln!("warning: {e}");
+                            }
+                        } else {
+                            eprintln!("Run 'nix-collect-garbage' to reclaim the store space.");
+                        }
+                    }
+                    if failed > 0 {
+                        ExitCode::from(1)
+                    } else {
+                        ExitCode::SUCCESS
+                    }
+                }
+            }
         }
     }
 }

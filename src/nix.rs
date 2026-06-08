@@ -11,6 +11,19 @@ use std::process::Command;
 /// Largest number of store paths to pass to one `nix-store` invocation.
 const CHUNK: usize = 256;
 
+/// Run `nix-collect-garbage`, inheriting stdio so its progress is visible.
+pub fn collect_garbage() -> io::Result<()> {
+    eprintln!("Running nix-collect-garbage…");
+    let status = Command::new("nix-collect-garbage").status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "nix-collect-garbage exited with {status}"
+        )))
+    }
+}
+
 fn run(query: &str, paths: &[String]) -> io::Result<String> {
     let out = Command::new("nix-store")
         .arg("-q")
