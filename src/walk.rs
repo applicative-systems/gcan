@@ -39,7 +39,8 @@ pub struct Group {
     pub count: usize,
     /// Every member sits in a user-writable directory.
     pub writable: bool,
-    /// Any member is a protected `current-*` / `booted-*` root.
+    /// Any member must never be offered for deletion: a `current-*`/`booted-*`
+    /// root, the active generation of a profile, or a regenerable nix pin.
     pub protected: bool,
 }
 
@@ -92,11 +93,7 @@ pub fn scan(gcroots: &Path) -> Vec<Group> {
             .or_else(|| mtime_secs(link))
             .unwrap_or(0);
         let writable = indirect.parent().map(access_wx).unwrap_or(false);
-        let protected = indirect
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(is_protected)
-            .unwrap_or(false);
+        let protected = is_protected_root(&indirect);
 
         let indirect_str = indirect.to_string_lossy().into_owned();
         let (key, loc, kind) = classify(&indirect_str);
@@ -202,12 +199,63 @@ fn access_wx(dir: &Path) -> bool {
     unsafe { libc::access(c.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
 }
 
-/// A protected "current" root that must never be offered for deletion.
+/// Whether an indirect root must never be offered for deletion: a named
+/// `current-*`/`booted-*` root, the live generation of any profile, or a
+/// regenerable nix pin.
+fn is_protected_root(indirect: &Path) -> bool {
+    let name_protected = indirect
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(is_protected)
+        .unwrap_or(false);
+    name_protected || is_active_profile_generation(indirect) || is_regenerable_pin(indirect)
+}
+
+/// A protected "current" root (by name) that must never be offered for deletion.
 fn is_protected(name: &str) -> bool {
     name == "current"
         || name.starts_with("current-")
         || name.ends_with("-current")
         || name.starts_with("booted-")
+}
+
+/// Split a profile generation link name `"<name>-<N>-link"` into its profile
+/// `<name>`, or `None` if it is not a generation link (`<N>` must be all digits).
+fn profile_generation_name(file: &str) -> Option<&str> {
+    let stem = file.strip_suffix("-link")?;
+    let (name, generation) = stem.rsplit_once('-')?;
+    if name.is_empty() || generation.is_empty() || !generation.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Whether `indirect` is the *live* generation of a profile — the one the bare
+/// `<name>` sibling symlink currently points at (e.g. `profile` -> `profile-53-link`,
+/// `system` -> `system-181-link`). Deleting it would unroot the in-use profile,
+/// so it is protected just like `current-system`.
+fn is_active_profile_generation(indirect: &Path) -> bool {
+    let Some(file) = indirect.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let Some(name) = profile_generation_name(file) else {
+        return false;
+    };
+    let Some(parent) = indirect.parent() else {
+        return false;
+    };
+    // Read the bare `<name>` symlink one level; it points at the active link.
+    match fs::read_link(parent.join(name)) {
+        Ok(target) => target.file_name().and_then(|n| n.to_str()) == Some(file),
+        Err(_) => false,
+    }
+}
+
+/// Nix's global flake-registry cache. It is a real store root, but nix
+/// re-creates it on demand, so deleting it reclaims nothing lasting and only
+/// clutters the list — never offer it.
+fn is_regenerable_pin(indirect: &Path) -> bool {
+    indirect.file_name().and_then(|n| n.to_str()) == Some("flake-registry.json")
 }
 
 /// Determine the group key, display location, and kind for an indirect path.
@@ -235,6 +283,38 @@ mod tests {
         assert!(!is_protected("home-manager-17-link"));
         assert!(!is_protected("result-1"));
         assert!(!is_protected("flake-profile-abc"));
+    }
+
+    #[test]
+    fn profile_generation_parsing() {
+        assert_eq!(profile_generation_name("profile-53-link"), Some("profile"));
+        assert_eq!(profile_generation_name("system-181-link"), Some("system"));
+        assert_eq!(
+            profile_generation_name("home-manager-17-link"),
+            Some("home-manager")
+        );
+        // Not generation links: no `-link` suffix, or no numeric generation.
+        assert_eq!(profile_generation_name("profile"), None);
+        assert_eq!(profile_generation_name("profile-link"), None);
+        assert_eq!(profile_generation_name("result-1"), None);
+        assert_eq!(profile_generation_name("-1-link"), None);
+        // Syntactically a generation link; protection still hinges on whether a
+        // live sibling symlink points at it (here none does).
+        assert_eq!(
+            profile_generation_name("flake-tmp-profile.602839-1-link"),
+            Some("flake-tmp-profile.602839")
+        );
+    }
+
+    #[test]
+    fn regenerable_pin() {
+        assert!(is_regenerable_pin(Path::new(
+            "/home/u/.cache/nix/flake-registry.json"
+        )));
+        assert!(is_regenerable_pin(Path::new(
+            "/root/.cache/nix/flake-registry.json"
+        )));
+        assert!(!is_regenerable_pin(Path::new("/home/u/proj/result-1")));
     }
 
     #[test]

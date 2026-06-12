@@ -17,8 +17,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Analyze Nix GC roots: transitive closure size, age, and location, with direnv
 /// roots grouped per project. `list` and `tui` default to roots you can actually
-/// delete (never the protected `current-*`/`booted-*` ones); `--all` widens the
-/// view.
+/// delete; protected roots are never offered — `current-*`/`booted-*` roots, the
+/// live generation of any profile (user `profile`, NixOS `system`, …), and
+/// regenerable nix pins. `--all` widens the view.
 #[derive(Parser)]
 #[command(name = "gcan", version, about, long_about = None)]
 struct Cli {
