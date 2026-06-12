@@ -1,4 +1,18 @@
+<div align="center">
+
 # gcan — see what's eating your Nix store, and reclaim it
+
+Find the GC roots quietly pinning gigabytes of your Nix store, and clear them out safely.
+
+**Developed and maintained by [Applicative Systems](https://applicative.systems/)**
+
+<p>
+<a href="https://matrix.to/#/#applicative.systems:matrix.org"><img src="https://img.shields.io/badge/Support-%23applicative.systems-blue"/></a>
+</p>
+
+</div>
+
+![gcan TUI demo](demo.gif)
 
 `nix-collect-garbage` only frees what nothing points to. The trouble is that a
 lot _does_ point to things — every `nix build` result, every `direnv`
@@ -20,6 +34,15 @@ safely.
       ----
       26GB             TOTAL reclaimable
 ```
+
+## Key Features
+
+- **Real closure sizes:** roots ranked by the disk they're keeping alive, not their on-disk size.
+- **direnv projects grouped:** one line per project with the true cost, not 30 cryptic hashes.
+- **Interactive TUI:** browse, sort, and delete roots without leaving the keyboard.
+- **Filter by size and age:** `--min-size 1G --min-age 30d` to focus on what's worth clearing.
+- **Safe by default:** never offers system, booted, or current generations for deletion.
+- **Scriptable:** JSON output, paths-only output, and exit codes that play well with shell pipelines.
 
 ## Why you'd want it
 
@@ -114,6 +137,26 @@ nix-collect-garbage
 You can also export the full inventory as JSON (`gcan list --all --format json`)
 to feed into your own scripts or dashboards.
 
-## Maintainers
+## Professional Services
 
-`gcan` is built and maintained by [**applicative.systems**](https://applicative.systems).
+We offer commercial support to help you get the most out of Nix and your infrastructure:
+
+- **Nix Infrastructure Consulting:** audit, design, and tune your build and deployment pipelines.
+- **Custom Development:** tailored tooling for your stack.
+- **Training:** hands-on Nix and NixOS for your team.
+- **Integration Support:** help wiring Nix and friends into CI and developer workflows.
+
+Contact us:
+
+- 📧 [hello@applicative.systems](mailto:hello@applicative.systems)
+- 🤝 [Schedule a meeting](https://nixcademy.com/meet)
+
+## Community
+
+- Join our [Matrix channel](https://matrix.to/#/#applicative.systems:matrix.org)
+- Report issues on [GitHub](https://github.com/applicative-systems/gcan/issues)
+- Contribute via [Pull Requests](https://github.com/applicative-systems/gcan/pulls)
+
+## License
+
+[MIT License](./LICENSE)
