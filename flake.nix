@@ -26,11 +26,19 @@
           a: s: a // builtins.mapAttrs (k: v: (a.${k} or { }) // { ${s} = v; }) (f s)
         ) { } systems;
     in
-    eachSystem systems (
+    {
+      overlays.default = import ./overlay.nix;
+    }
+    // eachSystem systems (
       system:
       let
-        pkgs = import inputs.nixpkgs { inherit system; };
-        naersk = pkgs.callPackage inputs.naersk { };
+        pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [
+            inputs.naersk.overlays.default
+            inputs.self.overlays.default
+          ];
+        };
         treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.lock";
 
@@ -45,11 +53,7 @@
         };
       in
       {
-        packages.default = naersk.buildPackage {
-          src = ./.;
-          # gcan shells out to `nix-store` at runtime; it is meaningless on a
-          # host without nix, so we intentionally do not bundle nix.
-        };
+        packages.default = pkgs.gcan;
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ inputs.self.packages.${system}.default ];
@@ -70,16 +74,7 @@
         checks = {
           formatting = treefmtEval.config.build.check inputs.self;
 
-          clippy = naersk.buildPackage {
-            src = ./.;
-            mode = "clippy";
-            cargoBuildOptions = x: x ++ [ "--all-targets" ];
-          };
-
-          tests = naersk.buildPackage {
-            src = ./.;
-            mode = "test";
-          };
+          inherit (pkgs.gcan.passthru.tests) clippy tests;
         };
       }
     );
