@@ -5,6 +5,7 @@ mod format;
 mod nix;
 mod output;
 mod size;
+mod summary;
 mod tui;
 mod walk;
 
@@ -61,6 +62,9 @@ enum Command {
 
     /// Browse and prune GC roots interactively.
     Tui(TuiArgs),
+
+    /// Print store-wide reclamation figures (collectable, reclaimable, pinned).
+    Summary(SummaryArgs),
 }
 
 /// Predicate filters, shared by list/delete/tui.
@@ -123,6 +127,19 @@ struct TuiArgs {
     /// Start showing all roots, not just the deletable ones.
     #[arg(long)]
     all: bool,
+}
+
+#[derive(Args)]
+struct SummaryArgs {
+    /// Output format (`table` or `json`; `paths` falls back to `table`).
+    #[arg(long, value_enum, default_value_t = Format::Table)]
+    format: Format,
+
+    /// Also compute the collectable-now figure. Off by default: it needs a
+    /// full-store dead-path scan (`nix-store --gc --print-dead`) that dominates
+    /// the runtime and can't be cached.
+    #[arg(long)]
+    collectable: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -218,6 +235,19 @@ fn main() -> ExitCode {
                     }
                 }
             }
+        }
+
+        Command::Summary(a) => {
+            let s = match summary::compute(&groups, &mut cache, now, a.collectable) {
+                Ok(s) => s,
+                Err(e) => return fail(&format!("summary: {e}")),
+            };
+            save_cache(&g, &cache);
+            match a.format {
+                Format::Json => println!("{}", summary::render_json(&s)),
+                _ => print!("{}", summary::render_table(&s)),
+            }
+            ExitCode::SUCCESS
         }
     }
 }

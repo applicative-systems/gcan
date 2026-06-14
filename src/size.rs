@@ -46,20 +46,28 @@ fn compute(members: &[String], cache: &mut Cache) -> std::io::Result<u64> {
     let mut reqs = nix::requisites(members)?;
     reqs.sort();
     reqs.dedup();
+    Ok(cached_sizes(&reqs, cache)?.iter().sum())
+}
 
-    let missing: Vec<String> = reqs
+/// Own NAR size of each path, served from the cache where possible. Only the
+/// paths not already memoized are queried (once, deduplicated) and recorded;
+/// the result is aligned to `paths`. Per-path sizes are immutable, so any path
+/// seen on a previous run costs nothing here. Callers decide whether to persist.
+pub fn cached_sizes(paths: &[String], cache: &mut Cache) -> std::io::Result<Vec<u64>> {
+    let mut missing: Vec<String> = paths
         .iter()
         .filter(|p| !cache.sizes.contains_key(*p))
         .cloned()
         .collect();
+    missing.sort();
+    missing.dedup();
     if !missing.is_empty() {
         for (p, s) in missing.iter().zip(nix::sizes(&missing)?) {
             cache.sizes.insert(p.clone(), s);
         }
     }
-
-    Ok(reqs
+    Ok(paths
         .iter()
         .map(|p| cache.sizes.get(p).copied().unwrap_or(0))
-        .sum())
+        .collect())
 }

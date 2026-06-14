@@ -41,6 +41,60 @@ fn run(query: &str, paths: &[String]) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Of `paths`, the ones Nix no longer considers valid. Uses
+/// `nix-store --check-validity --print-invalid`, which *prints* the invalid
+/// paths instead of failing — so a stray invalid entry (e.g. one
+/// `--print-dead` reports for a half-collected path) never aborts a sizing pass.
+pub fn invalid_paths(paths: &[String]) -> io::Result<Vec<String>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut invalid = Vec::new();
+    for chunk in paths.chunks(CHUNK) {
+        let out = Command::new("nix-store")
+            .args(["--check-validity", "--print-invalid"])
+            .args(chunk)
+            .output()?;
+        if !out.status.success() {
+            let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return Err(io::Error::other(if msg.is_empty() {
+                "nix-store --check-validity failed".to_string()
+            } else {
+                msg
+            }));
+        }
+        invalid.extend(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::to_string),
+        );
+    }
+    Ok(invalid)
+}
+
+/// The store paths that are dead right now — exactly what a plain
+/// `nix-collect-garbage` (without `-d`) would delete. Stable interface:
+/// `nix-store --gc --print-dead`.
+pub fn dead_paths() -> io::Result<Vec<String>> {
+    let out = Command::new("nix-store")
+        .args(["--gc", "--print-dead"])
+        .output()?;
+    if !out.status.success() {
+        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(io::Error::other(if msg.is_empty() {
+            "nix-store --gc --print-dead failed".to_string()
+        } else {
+            msg
+        }));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("/nix/store/"))
+        .map(str::to_string)
+        .collect())
+}
+
 /// The transitive closure (requisites) of the union of `paths`.
 pub fn requisites(paths: &[String]) -> io::Result<Vec<String>> {
     if paths.is_empty() {

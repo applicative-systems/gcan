@@ -61,8 +61,12 @@ safely.
 
 ## Using it
 
-`gcan` has three subcommands: **`list`** (show roots), **`delete`** (remove them),
-and **`tui`** (do it interactively).
+`gcan` has four subcommands: 
+
+- **`list`**: show roots
+- **`delete`**: remove them
+- **`tui`**: do it interactively
+- **`summary`**: store-wide totals
 
 List the biggest reclaimable roots:
 
@@ -112,6 +116,38 @@ gcan delete --min-size 2G --min-age 30d --gc
 # Or pipe the exact symlinks somewhere and remove them yourself:
 gcan list --min-size 1G --format paths | xargs rm
 ```
+
+### The big picture in one call
+
+When you don't want the per-root table, just the store-wide totals, use
+`summary`:
+
+```sh
+$ gcan summary
+Collectable now (dead paths):   (skipped; pass --collectable)
+Reclaimable (prune safe roots): 79GB
+Pinned — system:                33GB
+Pinned — user (beyond system):  16GB
+```
+
+- **Reclaimable**: what pruning every safe root would let GC free (the same
+  total as `list`).
+- **Pinned — system**: the closure pinned by system roots (the running system,
+  profile generations). Only the root user can free it.
+- **Pinned — user**: what your roots pin _beyond_ the system closure, so the
+  shared base (glibc, etc.) is never double-counted.
+
+These all read from `gcan`'s cache, so a warm `summary` returns in well under a
+second. The **collectable-now** figure — what a plain `nix-collect-garbage`
+would free this instant — is **off by default**, because it needs a full-store
+dead-path scan that can't be cached and takes tens of seconds. Ask for it with
+`--collectable`:
+
+```sh
+gcan summary --collectable
+```
+
+Add `--format json` for a machine-readable snapshot to feed dashboards or a daemon.
 
 ### One important last step
 
