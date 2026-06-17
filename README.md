@@ -61,7 +61,7 @@ safely.
 
 ## Using it
 
-`gcan` has four subcommands: 
+`gcan` has four subcommands:
 
 - **`list`**: show roots
 - **`delete`**: remove them
