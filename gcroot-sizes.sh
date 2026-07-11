@@ -188,13 +188,14 @@ done < <(find "$GCROOTS" -type l)
 
 # Compute the union closure size (bytes) of a set of store paths.
 closure_bytes() {
-  local paths="$1"
-  [[ -z ${paths// /} ]] && {
+  local -a paths
+  read -ra paths <<<"$1"
+  ((${#paths[@]})) || {
     echo 0
     return
   }
   # requisites of all members -> dedup -> sum each path's own NAR size.
-  nix-store -q --requisites $paths 2>/dev/null | sort -u |
+  nix-store -q --requisites "${paths[@]}" 2>/dev/null | sort -u |
     xargs -r nix-store -q --size 2>/dev/null |
     awk '{s+=$1} END{print s+0}'
 }
