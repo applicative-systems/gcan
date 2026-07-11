@@ -5,7 +5,7 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
     naersk.url = "github:nix-community/naersk";
-    naersk.inputs.nixpkgs.follows = "nixpkgs";
+    naersk.flake = false;
   };
 
   outputs =
@@ -32,7 +32,7 @@
         pkgs = import inputs.nixpkgs {
           inherit system;
           overlays = [
-            inputs.naersk.overlays.default
+            (import "${inputs.naersk}/overlay.nix")
             inputs.self.overlays.default
           ];
         };
