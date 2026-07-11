@@ -6,9 +6,6 @@
 
     naersk.url = "github:nix-community/naersk";
     naersk.inputs.nixpkgs.follows = "nixpkgs";
-
-    treefmt-nix.url = "github:numtide/treefmt-nix";
-    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -39,18 +36,7 @@
             inputs.self.overlays.default
           ];
         };
-        treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
-          projectRootFile = "flake.lock";
-
-          programs = {
-            deadnix.enable = true;
-            nixfmt.enable = true;
-            rustfmt.enable = true;
-            shfmt.enable = true;
-            statix.enable = true;
-            prettier.enable = true;
-          };
-        };
+        inherit (pkgs) lib;
       in
       {
         packages.default = pkgs.gcan;
@@ -65,14 +51,93 @@
             pkgs.rustfmt
             pkgs.rust-analyzer
             pkgs.nix
-            treefmtEval.config.build.wrapper
+            inputs.self.formatter.${system}
           ];
         };
 
-        formatter = treefmtEval.config.build.wrapper;
+        formatter = pkgs.treefmt.withConfig {
+          settings = {
+            tree-root-file = "flake.nix";
+            on-unmatched = "info";
+            formatter = {
+              nixfmt = {
+                command = lib.getExe pkgs.nixfmt;
+                includes = [ "*.nix" ];
+              };
+              statix = {
+                command = lib.getExe pkgs.statix;
+                options = [ "fix" ];
+                no-positional-arg-support = true;
+                includes = [ "*.nix" ];
+              };
+              deadnix = {
+                command = lib.getExe pkgs.deadnix;
+                options = [ "--edit" ];
+                includes = [ "*.nix" ];
+              };
+              rustfmt = {
+                command = lib.getExe pkgs.rustfmt;
+                options = [
+                  "--config"
+                  "skip_children=true"
+                  "--edition"
+                  "2024"
+                ];
+                includes = [ "*.rs" ];
+              };
+              taplo = {
+                command = lib.getExe pkgs.taplo;
+                options = [ "format" ];
+                includes = [ "*.toml" ];
+              };
+              prettier = {
+                command = lib.getExe pkgs.prettier;
+                options = [ "--write" ];
+                includes = [
+                  "*.css"
+                  "*.html"
+                  "*.js"
+                  "*.json"
+                  "*.md"
+                  "*.yaml"
+                  "*.yml"
+                ];
+                # Askama templates use Jinja-like `{% ... %}` tags that
+                # prettier doesn't understand — it reflows them across
+                # lines and breaks rendering. Exclude the template folder.
+                excludes = [ "argunix-web/templates/*" ];
+              };
+              shellcheck = {
+                command = lib.getExe pkgs.shellcheck;
+                includes = [
+                  "*.sh"
+                  "*.bash"
+                ];
+                excludes = [
+                  ".envrc"
+                ];
+              };
+              shfmt = {
+                command = lib.getExe pkgs.shfmt;
+                options = [
+                  "-w"
+                  "-i"
+                  "2"
+                  "-s"
+                ];
+                includes = [
+                  "*.sh"
+                  "*.bash"
+                  "*.envrc"
+                  "*.envrc.*"
+                ];
+              };
+            };
+          };
+        };
 
         checks = {
-          formatting = treefmtEval.config.build.check inputs.self;
+          formatting = inputs.self.formatter.${system}.check inputs.self;
 
           inherit (pkgs.gcan.passthru.tests) clippy tests;
         };
