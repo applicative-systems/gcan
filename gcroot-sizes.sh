@@ -275,7 +275,7 @@ if ((DELETE)); then
   fi
   print_table >&2
   echo >&2
-  if ((!ASSUME_YES)); then
+  if ((! ASSUME_YES)); then
     prompt="Delete the ${#links[@]} indirect symlink(s) for the roots above? [y/N] "
     if [[ -t 0 ]]; then
       read -r -p "$prompt" ans
