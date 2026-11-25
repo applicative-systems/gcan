@@ -11,37 +11,31 @@
   outputs =
     inputs:
     let
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "aarch64-darwin"
-      ];
-
-      eachSystem =
-        systems: f:
-        builtins.foldl' (
-          a: s: a // builtins.mapAttrs (k: v: (a.${k} or { }) // { ${s} = v; }) (f s)
-        ) { } systems;
+      inherit (inputs.nixpkgs) lib;
     in
     {
-      overlays.default = import ./overlay.nix;
-    }
-    // eachSystem systems (
-      system:
-      let
-        pkgs = import inputs.nixpkgs {
-          inherit system;
-          overlays = [
-            (import "${inputs.naersk}/overlay.nix")
-            inputs.self.overlays.default
-          ];
-        };
-        inherit (pkgs) lib;
-      in
-      {
-        packages.default = pkgs.gcan;
+      overlays = {
+        gcan = import ./overlay.nix;
+        naersk = import (inputs.naersk + "/overlay.nix");
+        default = lib.composeManyExtensions [
+          inputs.self.overlays.naersk
+          inputs.self.overlays.gcan
+        ];
+      };
 
-        devShells.default = pkgs.mkShell {
+      packages = builtins.mapAttrs (
+        system: pkgs':
+        let
+          pkgs = pkgs'.extend inputs.self.overlays.default;
+        in
+        {
+          inherit (pkgs) gcan;
+          default = inputs.self.packages.${system}.gcan;
+        }
+      ) inputs.nixpkgs.legacyPackages;
+
+      devShells = builtins.mapAttrs (system: pkgs: {
+        default = pkgs.mkShell {
           inputsFrom = [ inputs.self.packages.${system}.default ];
 
           packages = [
@@ -54,8 +48,11 @@
             inputs.self.formatter.${system}
           ];
         };
+      }) inputs.nixpkgs.legacyPackages;
 
-        formatter = pkgs.treefmt.withConfig {
+      formatter = builtins.mapAttrs (
+        _system: pkgs:
+        pkgs.treefmt.withConfig {
           settings = {
             tree-root-file = "flake.nix";
             on-unmatched = "info";
@@ -93,29 +90,11 @@
               prettier = {
                 command = lib.getExe pkgs.prettier;
                 options = [ "--write" ];
-                includes = [
-                  "*.css"
-                  "*.html"
-                  "*.js"
-                  "*.json"
-                  "*.md"
-                  "*.yaml"
-                  "*.yml"
-                ];
-                # Askama templates use Jinja-like `{% ... %}` tags that
-                # prettier doesn't understand — it reflows them across
-                # lines and breaks rendering. Exclude the template folder.
-                excludes = [ "argunix-web/templates/*" ];
+                includes = [ "*.md" ];
               };
               shellcheck = {
                 command = lib.getExe pkgs.shellcheck;
-                includes = [
-                  "*.sh"
-                  "*.bash"
-                ];
-                excludes = [
-                  ".envrc"
-                ];
+                includes = [ "*.sh" ];
               };
               shfmt = {
                 command = lib.getExe pkgs.shfmt;
@@ -127,20 +106,18 @@
                 ];
                 includes = [
                   "*.sh"
-                  "*.bash"
                   "*.envrc"
-                  "*.envrc.*"
                 ];
               };
             };
           };
-        };
+        }
+      ) inputs.nixpkgs.legacyPackages;
 
-        checks = {
-          formatting = inputs.self.formatter.${system}.check inputs.self;
+      checks = builtins.mapAttrs (system: _pkgs: {
+        formatting = inputs.self.formatter.${system}.check inputs.self;
 
-          inherit (pkgs.gcan.passthru.tests) clippy tests;
-        };
-      }
-    );
+        inherit (inputs.self.packages.${system}.default.passthru.tests) clippy tests;
+      }) inputs.nixpkgs.legacyPackages;
+    };
 }
